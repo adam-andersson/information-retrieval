@@ -12,6 +12,10 @@ import sys
 import getopt
 
 
+def create_ngram(sentence, n):
+    return [sentence[i:i + n] for i in range(len(sentence) - n + 1)]
+
+
 def build_LM(in_file):
     """
     build language models for each label
@@ -19,99 +23,57 @@ def build_LM(in_file):
     """
     print("building language models...")
 
-    input_list = []
+    language_string_to_language_idx = {'malaysian': 0, 'indonesian': 1, 'tamil': 2}
+
+    training_data = []
 
     with open(in_file, 'r') as input_text:
         for line in input_text:
             split_line = line.split()
-            input_list.append([split_line[0], split_line[1:]])
+            language, text = split_line[0], ' '.join(split_line[1:])  # Separate language and the rest of the
+            # string into two variables
+            training_data.append([language, text])
 
-    cleaned_list = []
-    for entry in input_list:
-        clean_string = ' '.join(entry[1])
-        cleaned_list.append([entry[0], clean_string])
+    LM = [{}, {}, {}]  # Array that contains three dictionaries, one for each language.
 
-    malay_dict = {'malay_counter': 0}
-    indonesian_dict = {'indonesian_counter': 0}
-    tamil_dict = {'tamil_counter': 0}
+    for lang_dict in LM:
+        lang_dict['counter'] = 0  # Introduce a counter for how many ngrams have been used for this specific language.
 
-    for training_data in cleaned_list:
+    for training_row in training_data:
+        current_language = language_string_to_language_idx[training_row[0]]
+        # Use dictionary to convert language in string representation to a index.
 
-        current_language = training_data[0]
-        sentence = training_data[1]
-        n = 4
+        sentence = training_row[1].lower()
+        sentence = re.sub('[^a-zA-Z]+', '', sentence)
 
-        four_gram = [sentence[i:i + n] for i in range(len(sentence) - n + 1)]
+        four_gram = create_ngram(sentence, 4)
+        # Converts something like 'hello hi' into ['hell', 'ello', 'llo ', 'lo h', 'o hi']
 
-        for gram in four_gram:  # TODO: Init empty dicts if no match. Then increment only for matching curr language.
-            if gram in malay_dict:  # if it is in either language's dict, it must be in this one too
-                if current_language == 'malaysian':
-                    malay_dict[gram] += 1
-                    malay_dict['malay_counter'] += 1
-                if current_language == 'indonesian':
-                    indonesian_dict[gram] += 1
-                    indonesian_dict['indonesian_counter'] += 1
-                if current_language == 'tamil':
-                    tamil_dict[gram] += 1
-                    tamil_dict['tamil_counter'] += 1
-            else:
-                if current_language == 'malaysian':
-                    malay_dict[gram] = 1
-                    malay_dict['malay_counter'] += 1
-                    indonesian_dict[gram] = 0
-                    tamil_dict[gram] = 0
+        for gram in four_gram:
+            if gram not in LM[0]:  # Check if this gram is NOT in the malaysian dictionary.
+                # If the gram have been seen before, it must be in all languages dictionaries (incl. Malaysian)
+                for lang_dict in LM:    # If first time we see this gram, we create a new key-value pair
+                    # with key = gram and value = 0 in all the three different language dictionaries.
+                    lang_dict[gram] = 0
 
-                if current_language == 'indonesian':
-                    indonesian_dict[gram] = 1
-                    indonesian_dict['indonesian_counter'] += 1
-                    malay_dict[gram] = 0
-                    tamil_dict[gram] = 0
+            LM[current_language][gram] += 1  # Add one to the counter of this specific gram for the current language.
+            LM[current_language]['counter'] += 1    # The current language have been trained on one more gram,
+            # so the counter should be incremented.
 
-                if current_language == 'tamil':
-                    tamil_dict[gram] = 1
-                    tamil_dict['tamil_counter'] += 1
-                    malay_dict[gram] = 0
-                    indonesian_dict[gram] = 0
+    for lang_dict in LM:
+        for key in lang_dict.keys():
+            if key != 'counter':
+                lang_dict[key] += 1  # Add-1 smoothing
+                lang_dict['counter'] += 1  # Must also add 1 to the counter for the probabilities to remain
+                # stochastic rows.
 
-    print(malay_dict['malay_counter'])
-    print(indonesian_dict['indonesian_counter'])
-    print(tamil_dict['tamil_counter'])
+        for key in lang_dict.keys():
+            if key != 'counter':
+                # Create probabilities instead of just counting number of appearances.
+                lang_dict[key] = math.log(lang_dict[key] / lang_dict['counter'])
+                # Log-probabilities to overcome underflow problems.
 
-    for key in malay_dict.keys():
-        if key != 'malay_counter':
-            malay_dict[key] += 1  # Add-1 smoothing
-            malay_dict['malay_counter'] += 1
-
-    for key in indonesian_dict.keys():
-        if key != 'indonesian_counter':
-            indonesian_dict[key] += 1  # Add-1 smoothing
-            indonesian_dict['indonesian_counter'] += 1
-
-    for key in tamil_dict.keys():
-        if key != 'tamil_counter':
-            tamil_dict[key] += 1  # Add-1 smoothing
-            tamil_dict['tamil_counter'] += 1
-
-    print(malay_dict['malay_counter'])
-    print(indonesian_dict['indonesian_counter'])
-    print(tamil_dict['tamil_counter'])
-
-    c_malay = malay_dict['malay_counter']
-    for key in malay_dict.keys():
-        if key != 'malay_counter':
-            malay_dict[key] = math.log(malay_dict[key] / c_malay)   # log-probabilities to overcome underflow problems.
-
-    c_indonesian = indonesian_dict['indonesian_counter']
-    for key in indonesian_dict.keys():
-        if key != 'indonesian_counter':
-            indonesian_dict[key] = math.log(indonesian_dict[key] / c_indonesian)
-
-    c_tamil = tamil_dict['tamil_counter']
-    for key in tamil_dict.keys():
-        if key != 'tamil_counter':
-            tamil_dict[key] = math.log(tamil_dict[key] / c_tamil)
-
-    return [malay_dict, indonesian_dict, tamil_dict]
+    return LM
 
 
 def test_LM(in_file, out_file, LM):
@@ -122,51 +84,54 @@ def test_LM(in_file, out_file, LM):
     """
     print("testing language models...")
 
-    malay_dict, indonesian_dict, tamil_dict = LM
+    language_idx_to_language_string = {0: 'malaysian', 1: 'indonesian', 2: 'tamil'}
 
-    input_list = []
+    out_text = ''   # This is the string that will be iteratively appended and finally written to the outfile.
+
+    test_data = []
 
     with open(in_file, 'r') as input_text:
         for line in input_text:
-            input_list.append(line)
+            test_data.append(line)
 
-    out_text = ''
+    for test_line in test_data:
+        four_gram = create_ngram(test_line, 4)
 
-    for test_line in input_list:
-        n = 4
-        four_gram = [test_line[i:i + n] for i in range(len(test_line) - n + 1)]
-
-        # eval malay
-        malay_prob = 1
-        indonesian_prob = 1
-        tamil_prob = 1
-
+        probabilities = [1, 1, 1]  # Initial probability is 1 for all languages.
+        gram_c = 0
+        new_grams = 0
         for gram in four_gram:
-            if gram in malay_dict:
-                malay_prob = malay_prob + malay_dict[gram]  # Multiplication in base_10 space is same as addition in
-                # Log space. Src: https://web.stanford.edu/~jurafsky/slp3/3.pdf (Eq. 3.13)
-                indonesian_prob = indonesian_prob + indonesian_dict[gram]
-                tamil_prob = tamil_prob + tamil_dict[gram]
 
-        max_prob = max(malay_prob, indonesian_prob, tamil_prob)
+            #gram = gram.lower()
+            #gram = re.sub('[^a-zA-Z]+', ' ', gram)
 
-        if max_prob == 1:  # This means that none of the input gram have ever been trained on before.
-            # Must be due to 'other' language.
-            max_likely_lang = 'other'
-        elif malay_prob == max_prob:
-            max_likely_lang = 'malaysian'
-        elif indonesian_prob == max_prob:
-            max_likely_lang = 'indonesian'
-        elif tamil_prob == max_prob:
-            max_likely_lang = 'tamil'
+            if gram in LM[0]:  # Check if this gram is in the malaysian dictionary.
+                # If the gram have been seen before, it must be in all languages dictionaries (incl. Malaysian)
+
+                for i in range(3):
+                    probabilities[i] = probabilities[i] + LM[i][gram]
+                    # Multiplication in base_10 space is same as addition in Log space.
+                    # Src: https://web.stanford.edu/~jurafsky/slp3/3.pdf (Eq. 3.13)
+            else:
+                new_grams += 1
+            gram_c += 1
+
+        max_prob = max(probabilities)
+        most_likely_language_idx = probabilities.index(max_prob)
+        # Find the index of the language we find most likely to match the string we test.
+
+        if new_grams / gram_c > 0.9:  # If more than 90% of the input gram haven't been in the training set.
+            # Most likely, this is because it is an 'other' language than Malaysian / Indonesian / Tamil.
+            most_likely_language_string = 'other'
         else:
-            max_likely_lang = 'other'
+            most_likely_language_string = language_idx_to_language_string[most_likely_language_idx]
+            # Use a dictionary to convert index to language in string form.
 
-        # out_text += f'{max_likely_lang} {malay_prob} {indonesian_prob} {tamil_prob} {test_line}'
-        out_text += f'{max_likely_lang} {test_line}'
+        out_text += f'{most_likely_language_string} {test_line}'    # Append the predicted language and the string we
+        # test on to the string that is going to be written to the outfile.
 
-    with open(out_file, "w") as text_file:
-        text_file.write(out_text)
+    with open(out_file, 'w') as text_file:
+        text_file.write(out_text)   # Write the out string we have iteratively created to the out file.
 
 
 def usage():
