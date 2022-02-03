@@ -16,6 +16,9 @@ def create_ngram(sentence, n):
     """
     takes a string (sentence) and an integer n.
     constructs and returns an array of the string's n-grams.
+
+    Use a window sliding technique to iteratively take the characters between index i and i+4 for all i s.t.
+    we start with left side of window at i = 0, and end when right side of window at i = <idx of last character>
     """
     return [sentence[i:i + n] for i in range(len(sentence) - n + 1)]
 
@@ -102,6 +105,7 @@ def test_LM(in_file, out_file, LM):
         four_gram = create_ngram(test_line, 4)
 
         probabilities = [1, 1, 1]  # Initial probability is 1 for all languages.
+        # Log(1) = 0, so this is a neutral starting value for the probability.
         gram_c = 0
         new_grams = 0
         for gram in four_gram:
