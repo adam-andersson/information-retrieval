@@ -9,8 +9,23 @@ I'm (We're) using Python Version 3.7.6 for
 this assignment.
 
 == General Notes about this assignment ==
+- Overview of program -
+The program trains a language model based on training data from a secondary file.
+After constructing the language model, the program may test the LM with sentences from a tertiary file to accurately predict if a text is in Indonesian, Malaysian or (phonetically transcribed into English) Tamil.
 
-The program ...
+- Building the Language Model -
+* Given an input row on the form "correct_language Full_sentence", the program creates all the n-grams of length 4 for the full sentence. This is done in the function create_ngram(). In the function, I've used a window sliding technique to iteratively take the characters between index i and i+4 for all i such that we start with left side of window at i = 0, and end when right side of window at i = <idx of last character>.
+* The program converts all uppercase letters to lowercase for more matching in the testing phase.
+* For every ngram, I add the ngram to the dictionary of all languages' models and increment that ngram's counter only for the correct language.
+* After going through all ngrams, I do add-1 smoothing to avoid future multiplication with 0.
+* Finally, the probability of every ngram, for all 3 languages is calculated in logarithmic space. This is to avoid arithmetic underflow. This probability is calculated as the logarithm of the specific ngram's number of appearances divided by the total number of appearances (incl. those due to the smoothing) for all ngrams for that language.
+
+
+- Testing the Language Model -
+
+- Experimentation -
+
+
 ////
 Give an overview of your program, describe the important algorithms/steps
 in your program, and discuss your experiments in general.  A few paragraphs 
