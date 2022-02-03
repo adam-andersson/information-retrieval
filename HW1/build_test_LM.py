@@ -13,6 +13,10 @@ import getopt
 
 
 def create_ngram(sentence, n):
+    """
+    takes a string (sentence) and an integer n.
+    constructs and returns an array of the string's n-grams.
+    """
     return [sentence[i:i + n] for i in range(len(sentence) - n + 1)]
 
 
@@ -43,8 +47,7 @@ def build_LM(in_file):
         current_language = language_string_to_language_idx[training_row[0]]
         # Use dictionary to convert language in string representation to a index.
 
-        sentence = training_row[1].lower()
-        sentence = re.sub('[^a-zA-Z]+', '', sentence)
+        sentence = training_row[1].lower()  # Converts all uppercase characters to lowercase.
 
         four_gram = create_ngram(sentence, 4)
         # Converts something like 'hello hi' into ['hell', 'ello', 'llo ', 'lo h', 'o hi']
@@ -52,12 +55,12 @@ def build_LM(in_file):
         for gram in four_gram:
             if gram not in LM[0]:  # Check if this gram is NOT in the malaysian dictionary.
                 # If the gram have been seen before, it must be in all languages dictionaries (incl. Malaysian)
-                for lang_dict in LM:    # If first time we see this gram, we create a new key-value pair
+                for lang_dict in LM:  # If first time we see this gram, we create a new key-value pair
                     # with key = gram and value = 0 in all the three different language dictionaries.
                     lang_dict[gram] = 0
 
             LM[current_language][gram] += 1  # Add one to the counter of this specific gram for the current language.
-            LM[current_language]['counter'] += 1    # The current language have been trained on one more gram,
+            LM[current_language]['counter'] += 1  # The current language have been trained on one more gram,
             # so the counter should be incremented.
 
     for lang_dict in LM:
@@ -86,7 +89,7 @@ def test_LM(in_file, out_file, LM):
 
     language_idx_to_language_string = {0: 'malaysian', 1: 'indonesian', 2: 'tamil'}
 
-    out_text = ''   # This is the string that will be iteratively appended and finally written to the outfile.
+    out_text = ''  # This is the string that will be iteratively appended and finally written to the outfile.
 
     test_data = []
 
@@ -95,6 +98,7 @@ def test_LM(in_file, out_file, LM):
             test_data.append(line)
 
     for test_line in test_data:
+
         four_gram = create_ngram(test_line, 4)
 
         probabilities = [1, 1, 1]  # Initial probability is 1 for all languages.
@@ -102,15 +106,14 @@ def test_LM(in_file, out_file, LM):
         new_grams = 0
         for gram in four_gram:
 
-            #gram = gram.lower()
-            #gram = re.sub('[^a-zA-Z]+', ' ', gram)
+            gram = gram.lower()  # Converts all uppercase characters to lowercase.
 
             if gram in LM[0]:  # Check if this gram is in the malaysian dictionary.
                 # If the gram have been seen before, it must be in all languages dictionaries (incl. Malaysian)
 
                 for i in range(3):
                     probabilities[i] = probabilities[i] + LM[i][gram]
-                    # Multiplication in base_10 space is same as addition in Log space.
+                    # Multiplication in linear space is same as addition in Log space.
                     # Src: https://web.stanford.edu/~jurafsky/slp3/3.pdf (Eq. 3.13)
             else:
                 new_grams += 1
@@ -120,18 +123,18 @@ def test_LM(in_file, out_file, LM):
         most_likely_language_idx = probabilities.index(max_prob)
         # Find the index of the language we find most likely to match the string we test.
 
-        if new_grams / gram_c > 0.9:  # If more than 90% of the input gram haven't been in the training set.
+        if new_grams / gram_c > 0.75:  # If more than 75% of the input gram haven't been in the training set.
             # Most likely, this is because it is an 'other' language than Malaysian / Indonesian / Tamil.
             most_likely_language_string = 'other'
         else:
             most_likely_language_string = language_idx_to_language_string[most_likely_language_idx]
             # Use a dictionary to convert index to language in string form.
 
-        out_text += f'{most_likely_language_string} {test_line}'    # Append the predicted language and the string we
-        # test on to the string that is going to be written to the outfile.
+        out_text += f'{most_likely_language_string} {test_line}'  # Append the predicted language
+        # and the string we test on to the string that is going to be written to the outfile.
 
     with open(out_file, 'w') as text_file:
-        text_file.write(out_text)   # Write the out string we have iteratively created to the out file.
+        text_file.write(out_text)  # Write the out string we have iteratively created to the out file.
 
 
 def usage():
