@@ -1,4 +1,4 @@
-# Homework #3 » BVector Space Model
+# Homework #3 » Vector Space Model
 
 ### Python version
 `Python Version 3.7.6`
