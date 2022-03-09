@@ -13,6 +13,10 @@ STOP_WORDS = set(nltk.corpus.stopwords.words('english') + [".", ",", ";", ":"])
 NUMBER_OF_BLOCKS = 10
 
 
+def calculate_tf(term_frequency):
+    return 1 + math.log10(term_frequency)
+
+
 def normalize_token(token):
     """
     Case-folds and porter-stems a token (str word). Returns a normalized token (str word).
@@ -39,10 +43,11 @@ def build_index(in_dir, out_dict, out_postings):
     term_id = 1  # we keep a global term id that we will assign to tokens when processing them
 
     all_documents = [int(f) for f in os.listdir(in_dir)]
-    all_documents.sort()    # TODO: Evaluate if it is OK to sort this. It makes the later implementations easier.
+    all_documents.sort()
 
     dictionary = {}
     postings_list = {}
+    documents_lengths = {}
 
     for doc_id in all_documents:
         with open(os.path.join(in_dir, str(doc_id)), 'r') as doc_open:
@@ -50,12 +55,19 @@ def build_index(in_dir, out_dict, out_postings):
 
         sentences = nltk.sent_tokenize(doc_text)
 
+        doc_length = 0
+
         processed_document = []
         for s in sentences:
             words = nltk.word_tokenize(s)
+            doc_length += len(words)
 
             # case-fold all word tokens, then porter-stem the word
             processed_document.append([normalize_token(token) for token in words])
+
+        # dictionary that keeps track of every terms frequency in this specific document
+        # this is later converted to a sum of weighted tf^2 for use in search.py
+        doc_wt = {}
 
         for sentence in processed_document:
             for token in sentence:
@@ -72,6 +84,7 @@ def build_index(in_dir, out_dict, out_postings):
                     dictionary[tokens_term_id] = 1
                     postings_list[tokens_term_id] = [(doc_id, 1)]   # initialise term freq to 1 (2nd term)
                     # every posting in a postings list is a tuple (doc_id, term_freq)
+                    doc_wt[tokens_term_id] = 1
                 else:
                     # first time seeing this term for this doc
                     if doc_id != postings_list[tokens_term_id][-1][0]:
@@ -84,21 +97,24 @@ def build_index(in_dir, out_dict, out_postings):
 
                         postings_list[tokens_term_id].append((doc_id, 1))
 
+                        # this dictionary is used for storing length of documents (soon: weighted)
+                        doc_wt[tokens_term_id] = 1
+
                     else:
                         # if we have already seen this token in this posting already,
                         # then we should add to its term frequency.
 
                         postings_list[tokens_term_id][-1] = (postings_list[tokens_term_id][-1][0], postings_list[tokens_term_id][-1][1] + 1)
 
-                        """
-                        for i in range(len(postings_list[tokens_term_id])):
-                            posting = postings_list[tokens_term_id][i]
-                            if posting[0] == doc_id:
-                                # can not modify a tuple, need to overwrite, hence:
-                                postings_list[tokens_term_id][i] = (posting[0], posting[1] + 1)
-                                break   # this can only happen once so we break when this happens
-                                
-                        """
+                        # this dictionary is used for storing length of documents (soon: weighted)
+                        doc_wt[tokens_term_id] += 1
+
+        # for every document, the weighted length of document is calculated for use when processing search queries.
+        doc_wt_sum = 0
+        for value in doc_wt.values():
+            tf_doc = calculate_tf(value)
+            doc_wt_sum += tf_doc ** 2
+        documents_lengths[doc_id] = doc_wt_sum
 
     print("... done with reading / writing blocks")
 
@@ -116,6 +132,10 @@ def build_index(in_dir, out_dict, out_postings):
 
     with open(out_dict, 'wb') as write_dict:
         pickle.dump(dictionary, write_dict)
+
+    with open('document_lengths.txt', 'wb') as write_lengths:
+        pickle.dump(len(all_documents), write_lengths)
+        pickle.dump(documents_lengths, write_lengths)  # store LENGTH[N] for future normalization
 
 
 
