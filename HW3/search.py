@@ -1,4 +1,5 @@
 #!/usr/bin/python3
+import bisect
 import math
 import pickle
 import re
@@ -6,6 +7,7 @@ import nltk
 import sys
 import getopt
 from heapq import heappop, heappush, heapify, nlargest, nsmallest, heapreplace
+import time
 
 PORTER_STEMMER = nltk.stem.porter.PorterStemmer()
 
@@ -33,20 +35,18 @@ class TrackScore:
     def __eq__(self, other):
         return self.score == other.score
 
+    def __repr__(self):
+        return str(self.score)
+
 
 def write_results_to_file(results_file, heap, number_of_results=10):
     # only write the top X results, or less if there isn't 10 good matches.
     number_of_results = number_of_results if len(heap) > 10 else len(heap)
-    write_string = ""
-    for i in range(number_of_results):
-        top_document = heappop(heap)
-        write_string += str(top_document) + " "
 
-    # remove the trailing whitespace from last document, and add a newline instead.
-    write_string = write_string[:-1] + '\n'
+    out_string = " ".join([str(heappop(heap)) for _ in range(number_of_results)]) + '\n'
 
     with open(results_file, 'a') as write_result:
-        write_result.write(write_string)
+        write_result.write(out_string)
 
 
 def retrieve_postings_list(dictionary, term_id):
@@ -194,7 +194,8 @@ def run_search(dict_file, postings_file, queries_file, results_file):
 
             new_score = TrackScore(key, normalized_score)
 
-            # TODO: Make the heap fixed size and not infinite large.
+            # This max-heap have the score of ALL documents, this is not optimal for time complexity
+            # TODO: Make the heap fixed size.
             heappush(lnc_ltc_heap, new_score)
 
         write_results_to_file(results_file, lnc_ltc_heap, 10)
