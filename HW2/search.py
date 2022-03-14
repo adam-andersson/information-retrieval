@@ -132,6 +132,11 @@ class PostingList:
         head_a = a
         prev_a = None
         prev_skip = None
+
+        # Base case. When b is None, we just return a.
+        if b is None:
+            return head_a
+
         while a is not None and a.next is not None:
             if a.doc_id == b.doc_id:
                 if prev_a is None:
