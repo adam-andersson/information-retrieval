@@ -115,8 +115,6 @@ def build_index(in_dir, out_dict, out_postings):
             doc_wt_sum += tf_doc ** 2
         documents_lengths[doc_id] = doc_wt_sum
 
-    print("... done with reading / writing blocks")
-
     with open('term_conversion.txt', 'wb') as term_conversion:
         pickle.dump(term_to_term_id, term_conversion)
         pickle.dump(term_id_to_term, term_conversion)
