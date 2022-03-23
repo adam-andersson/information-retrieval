@@ -1,4 +1,4 @@
-# Homework #3 » Vector Space Model
+# Homework #1 » Language Detection
 
 ### Python version
 `Python Version 3.7.6`
