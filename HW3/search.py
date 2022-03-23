@@ -1,13 +1,10 @@
 #!/usr/bin/python3
-import bisect
 import math
 import pickle
-import re
 import nltk
 import sys
 import getopt
-from heapq import heappop, heappush, heapify, nlargest, nsmallest, heapreplace
-import time
+from heapq import heappop, heappush, heapify
 
 PORTER_STEMMER = nltk.stem.porter.PorterStemmer()
 
@@ -41,7 +38,7 @@ class TrackScore:
 
 def write_results_to_file(results_file, heap, number_of_results=10):
     # only write the top X results, or less if there isn't 10 good matches.
-    number_of_results = number_of_results if len(heap) > 10 else len(heap)
+    number_of_results = number_of_results if len(heap) > number_of_results else len(heap)
 
     out_string = " ".join([str(heappop(heap)) for _ in range(number_of_results)]) + '\n'
 
@@ -86,11 +83,10 @@ def search_term(term_to_search, dictionary, term_to_term_id):
     Converts a term (str) to a posting list. Tries to first convert the term (str) to a term id (int) and
     then uses this term id to call a function that retrieves the posting list.
     """
-    if term_to_search in term_to_term_id:
-        term_id = term_to_term_id[term_to_search]
-    else:
-        return []    # if a query term does not exist, just return an empty posting list
+    if term_to_search not in term_to_term_id:
+        return []  # if the query term does not exist in dictionary, return an empty posting list
 
+    term_id = term_to_term_id[term_to_search]
     return retrieve_postings_list(dictionary, term_id)
 
 
@@ -106,7 +102,7 @@ def run_search(dict_file, postings_file, queries_file, results_file):
 
     with open(dict_file, 'rb') as read_dict:
         # We are able to read the full dictionary into memory
-        # The dictionary is structured as - term_id : (doc_freq, file_offset)
+        # The dictionary is structured as * term_id : (doc_freq, file_offset)
         dictionary = pickle.load(read_dict)
 
     with open('term_conversion.txt', 'rb') as read_term_converter:
@@ -115,7 +111,6 @@ def run_search(dict_file, postings_file, queries_file, results_file):
 
     with open('document_lengths.txt', 'rb') as read_lengths:
         number_of_docs = pickle.load(read_lengths)
-        # read LENGTH[N] for use when normalizing
         documents_lengths = pickle.load(read_lengths)
 
     with open(queries_file, 'r') as queries:
@@ -151,7 +146,7 @@ def run_search(dict_file, postings_file, queries_file, results_file):
             # --- TF x IDF (QUERY) --- #
             weight_qt = tf_qt * idf_qt
 
-            # add this weight (squared) to the total squared weight of this query.
+            # add this weight (squared) to the total squared weight of this query. This is used in cosine normalization
             sum_weight_q += weight_qt**2
 
             # in case of no posting list belonging to query term t, this will always return an empty list "[]"
@@ -178,20 +173,17 @@ def run_search(dict_file, postings_file, queries_file, results_file):
         heapify(lnc_ltc_heap)
 
         for key, value in scores_pre_normalize.items():
-            # formula for cosine normalization of the score is:
-            # [sum of all t in query: (wt*wt)] * [sum of all terms in document: tf_wt**2] *
-            # [sum of all terms in query: wt**2]
-
-            # note: the sum of all terms in document was calculated during indexing and is used
-            # from a dictionary during search.
+            # note: the document lengths was calculated during indexing and is used from a dictionary during search.
 
             normalized_score = value * cosine_normalize_factor(sum_weight_q) * \
                 cosine_normalize_factor(documents_lengths[key])
 
+            # TrackScore is a custom class that is used to be able to define our own definition of "<" and "=" between
+            # objects and also the string representation of such objects.
             new_score = TrackScore(key, normalized_score)
 
-            # This max-heap have the score of ALL documents, this is not optimal for time complexity
-            # TODO: Make the heap fixed size.
+            # this max-heap have the score of ALL documents, uses the heapq (min-heap) module but turns into a
+            # max-heap by changing the definitions of lt and eq with TrackScore class.
             heappush(lnc_ltc_heap, new_score)
 
         write_results_to_file(results_file, lnc_ltc_heap, 10)
