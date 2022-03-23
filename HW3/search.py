@@ -68,10 +68,6 @@ def calculate_idf(number_of_docs, document_frequency):
     return math.log10(number_of_docs / document_frequency)
 
 
-def calculate_tf_idf(term_freq, term_idf):
-    return (1 + math.log10(term_freq)) * term_idf
-
-
 def cosine_normalize_factor(weight_squared_sum):
     return 1 / math.sqrt(weight_squared_sum)
 
@@ -114,11 +110,13 @@ def run_search(dict_file, postings_file, queries_file, results_file):
         dictionary = pickle.load(read_dict)
 
     with open('term_conversion.txt', 'rb') as read_term_converter:
-        term_to_term_id = pickle.load(read_term_converter)  # term (str) -> term id (int, 4 bytes)
+        # term (str) -> term id (int, 4 bytes)
+        term_to_term_id = pickle.load(read_term_converter)
 
     with open('document_lengths.txt', 'rb') as read_lengths:
         number_of_docs = pickle.load(read_lengths)
-        documents_lengths = pickle.load(read_lengths)  # read LENGTH[N] for use when normalizing
+        # read LENGTH[N] for use when normalizing
+        documents_lengths = pickle.load(read_lengths)
 
     with open(queries_file, 'r') as queries:
         all_queries = queries.readlines()
@@ -140,12 +138,10 @@ def run_search(dict_file, postings_file, queries_file, results_file):
                 term_id = term_to_term_id[t]
                 doc_freq = dictionary[term_id][0]
 
-                # idf query -> parameters: document frequency and total number of documents
+                # idf query -> parameters: total number of documents and document frequency
                 idf_qt = calculate_idf(number_of_docs, doc_freq)
             else:
-                # the idf for the query term is set to 1 if it appears in NO documents
-                # this is an effort to avoid division or logarithm with zero.
-                # TODO: Evaluate if it is OK to set it to 0 or if another approach should be taken.
+                # the idf for the query term is set to 0 if it appears in NO documents
                 idf_qt = 0
 
             # --- TERM FREQUENCY (QUERY) --- #
@@ -153,7 +149,7 @@ def run_search(dict_file, postings_file, queries_file, results_file):
             tf_qt = calculate_tf(term_freq_qt)
 
             # --- TF x IDF (QUERY) --- #
-            weight_qt = calculate_tf_idf(tf_qt, idf_qt)
+            weight_qt = tf_qt * idf_qt
 
             # add this weight (squared) to the total squared weight of this query.
             sum_weight_q += weight_qt**2
@@ -190,7 +186,7 @@ def run_search(dict_file, postings_file, queries_file, results_file):
             # from a dictionary during search.
 
             normalized_score = value * cosine_normalize_factor(sum_weight_q) * \
-                          cosine_normalize_factor(documents_lengths[key])
+                cosine_normalize_factor(documents_lengths[key])
 
             new_score = TrackScore(key, normalized_score)
 
@@ -202,7 +198,8 @@ def run_search(dict_file, postings_file, queries_file, results_file):
 
 
 def usage():
-    print("usage: " + sys.argv[0] + " -d dictionary-file -p postings-file -q file-of-queries -o output-file-of-results")
+    print("usage: " +
+          sys.argv[0] + " -d dictionary-file -p postings-file -q file-of-queries -o output-file-of-results")
 
 
 dictionary_file = postings_file = file_of_queries = output_file_of_results = None
@@ -215,7 +212,7 @@ except getopt.GetoptError:
 
 for o, a in opts:
     if o == '-d':
-        dictionary_file  = a
+        dictionary_file = a
     elif o == '-p':
         postings_file = a
     elif o == '-q':
@@ -225,7 +222,7 @@ for o, a in opts:
     else:
         assert False, "unhandled option"
 
-if dictionary_file == None or postings_file == None or file_of_queries == None or file_of_output == None :
+if dictionary_file == None or postings_file == None or file_of_queries == None or file_of_output == None:
     usage()
     sys.exit(2)
 
