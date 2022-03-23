@@ -1,9 +1,7 @@
 #!/usr/bin/python3
 import math
 import os
-import bisect
 import pickle
-import re
 import nltk
 import sys
 import getopt
@@ -86,27 +84,28 @@ def build_index(in_dir, out_dict, out_postings):
                     # every posting in a postings list is a tuple (doc_id, term_freq)
                     doc_wt[tokens_term_id] = 1
                 else:
-                    # first time seeing this term for this doc
+                    # first time seeing this term for this document
                     if doc_id != postings_list[tokens_term_id][-1][0]:
-                        dictionary[tokens_term_id] += 1  # only increment for first occurrence in each docu
+                        dictionary[tokens_term_id] += 1  # only increment for first occurrence in each document
 
-                        " This was used when not sorting the documents before starting to process them "
-                        # bisect is a built-in module. Uses binary search [O(log n)] to
-                        # insert element into a sorted list.
-                        # bisect.insort(postings_list[tokens_term_id], (doc_id, 1))
-
+                        # since we process the documents in a sorted order, we can always append new documents to
+                        # the list and it will still be in a sorted order. If we were not processing in a sorted order
+                        # we could use bisect.insort(postings_list[tokens_term_id], (doc_id, 1)), a built-in module that
+                        # uses binary search [O(log n)] to insert element into a sorted list.
                         postings_list[tokens_term_id].append((doc_id, 1))
 
-                        # this dictionary is used for storing length of documents (soon: weighted)
+                        # this dictionary is used for storing length of documents, initialised to 1
                         doc_wt[tokens_term_id] = 1
 
                     else:
                         # if we have already seen this token in this posting already,
                         # then we should add to its term frequency.
 
-                        postings_list[tokens_term_id][-1] = (postings_list[tokens_term_id][-1][0], postings_list[tokens_term_id][-1][1] + 1)
+                        postings_list[tokens_term_id][-1] = (postings_list[tokens_term_id][-1][0],
+                                                             postings_list[tokens_term_id][-1][1] + 1)
 
-                        # this dictionary is used for storing length of documents (soon: weighted)
+                        # this dictionary is used for storing length of documents, incremented by one if it is not
+                        # the first occurrence of this term in this document.
                         doc_wt[tokens_term_id] += 1
 
         # for every document, the weighted length of document is calculated for use when processing search queries.
@@ -115,8 +114,6 @@ def build_index(in_dir, out_dict, out_postings):
             tf_doc = calculate_tf(value)
             doc_wt_sum += tf_doc ** 2
         documents_lengths[doc_id] = doc_wt_sum
-
-    print("... done with reading / writing blocks")
 
     with open('term_conversion.txt', 'wb') as term_conversion:
         pickle.dump(term_to_term_id, term_conversion)
@@ -136,21 +133,6 @@ def build_index(in_dir, out_dict, out_postings):
     with open('document_lengths.txt', 'wb') as write_lengths:
         pickle.dump(len(all_documents), write_lengths)
         pickle.dump(documents_lengths, write_lengths)  # store LENGTH[N] for future normalization
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-### END OF FILE. RANDOM STUFF BELOW ###
 
 
 def usage():
