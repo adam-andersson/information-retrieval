@@ -1,9 +1,7 @@
 #!/usr/bin/python3
 import math
 import os
-import bisect
 import pickle
-import re
 import nltk
 import sys
 import getopt
@@ -137,21 +135,6 @@ def build_index(in_dir, out_dict, out_postings):
     with open('document_lengths.txt', 'wb') as write_lengths:
         pickle.dump(len(all_documents), write_lengths)
         pickle.dump(documents_lengths, write_lengths)  # store LENGTH[N] for future normalization
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-### END OF FILE. RANDOM STUFF BELOW ###
 
 
 def usage():
