@@ -23,50 +23,6 @@ def create_ngram(sentence, n):
     return [sentence[i:i + n] for i in range(len(sentence) - n + 1)]
 
 
-def create_postings_and_dictionary(content, document_id, term_id, term_to_term_id, term_id_to_term,
-                                   dictionary, postings_list, token_length=1):
-    if token_length == 1:
-        sentence = content
-    elif token_length == 2 or token_length == 3:
-        sentence = create_ngram(content, token_length)
-        for idx, val in enumerate(sentence):
-            sentence[idx] = "%".join(val)
-    else:
-        raise NotImplementedError
-
-    for token in sentence:
-        if token not in term_to_term_id:
-            # if it is the first time we see this term, we add it to our dictionaries of terms and term ids
-            term_to_term_id[token] = term_id
-            term_id_to_term[term_id] = token
-            term_id += 1
-
-        tokens_term_id = term_to_term_id[token]
-
-        if tokens_term_id not in dictionary:
-            # first time seeing it, so it has only been seen in the current document (i.e. doc freq (block) = 1)
-            dictionary[tokens_term_id] = 1
-            postings_list[tokens_term_id] = [(document_id, 1)]  # initialise term freq to 1 (2nd term)
-            # every posting in a postings list is a tuple (doc_id, term_freq)
-        else:
-            # first time seeing this term for this document
-            if document_id != postings_list[tokens_term_id][-1][0]:
-                dictionary[tokens_term_id] += 1  # only increment for first occurrence in each document
-
-                # since we process the documents in a sorted order, we can always append new documents to
-                # the list and it will still be in a sorted order. If we were not processing in a sorted order
-                # we could use bisect.insort(postings_list[tokens_term_id], (doc_id, 1)), a built-in module that
-                # uses binary search [O(log n)] to insert element into a sorted list.
-                postings_list[tokens_term_id].append((document_id, 1))
-
-            else:
-                # if we have already seen this token in this posting already,
-                # then we should add to its term frequency.
-
-                postings_list[tokens_term_id][-1] = (postings_list[tokens_term_id][-1][0],
-                                                     postings_list[tokens_term_id][-1][1] + 1)
-
-
 def add_skip_ptrs(posting_list, length_of_posting_list):
     """
     Takes a list of tuples [(doc_id, doc_freq), (doc_id, doc_freq), ...]
@@ -80,18 +36,14 @@ def add_skip_ptrs(posting_list, length_of_posting_list):
     skip_distance = math.floor(length_of_posting_list / skips_to_add)
 
     position_index = 0
+    for key, value in posting_list.items():
+        postings_list_with_skip_ptr.append([key, len(value), value, 0])
 
-    while position_index < length_of_posting_list:
-        if position_index % skip_distance == 0 \
-                and position_index != length_of_posting_list - 1 \
+        if position_index % skip_distance == 0 and position_index != length_of_posting_list - 1 \
                 and position_index + skip_distance < length_of_posting_list:
-            postings_list_with_skip_ptr.append((posting_list[position_index][0],
-                                                posting_list[position_index][1],
-                                                position_index + skip_distance))
-        else:
-            postings_list_with_skip_ptr.append((posting_list[position_index][0],
-                                                posting_list[position_index][1],
-                                                0))
+
+            postings_list_with_skip_ptr[-1][3] = position_index + skip_distance
+
         position_index += 1
 
     return postings_list_with_skip_ptr
@@ -114,6 +66,63 @@ def normalize_words_in_list(list_of_words):
     return [normalize_token(token) for token in list_of_words if token.isalpha()]
 
 
+def create_positional_index(content, document_id, term_id, term_to_term_id, term_id_to_term,
+                            dictionary, postings_list, document_weights):
+    """
+    Create a postings list with positional indices. Goal is to have a dictionary where
+    we have a term_id as key:
+    dict[term_id] = doc_id:[54, 1337], doc_id: [123, 456, 789]
+    """
+
+    positional_idx = 0
+    for token in content:
+        positional_idx += 1
+        if token not in term_to_term_id:
+            # if it is the first time we see this term, we add it to our dictionaries of terms and term ids
+            term_to_term_id[token] = term_id
+            term_id_to_term[term_id] = token
+            term_id += 1
+
+        tokens_term_id = term_to_term_id[token]
+
+        if tokens_term_id not in dictionary:
+            # first time seeing it, so it has only been seen in the current document (i.e. doc freq = 1)
+            dictionary[tokens_term_id] = 1
+            postings_list[tokens_term_id] = {document_id: [positional_idx]}
+            # initialise the dictionary that maps doc_ids to positions.
+
+            document_weights[tokens_term_id] = 1
+        else:
+            # first time seeing this term for this document
+            if document_id not in postings_list[tokens_term_id]:
+                dictionary[tokens_term_id] += 1  # only increment for first occurrence in each document
+
+                # since we process the documents in a sorted order, we can always append new documents to
+                # the list and it will still be in a sorted order.
+                postings_list[tokens_term_id][document_id] = [positional_idx]
+
+                document_weights[tokens_term_id] = 1
+
+            else:
+                # if we have already seen this token in this posting already,
+                # then we should add the current position to the list.
+                postings_list[tokens_term_id][document_id].append(positional_idx)
+
+                # this dictionary is used for storing length of documents, initialised to 1
+                document_weights[tokens_term_id] += 1
+
+    return term_id
+
+
+def calculate_document_weight(document_weight, out_dictionary, document_id):
+    # for every document, the weighted length of document is calculated for use when processing search queries.
+    doc_wt_sum = 0
+    for value in document_weight.values():
+        tf_doc = calculate_tf(value)
+        doc_wt_sum += tf_doc ** 2
+    out_dictionary[document_id] = doc_wt_sum
+
+
 def build_index(in_file, out_dict, out_postings):
     """
     build index from documents stored in the input directory,
@@ -125,7 +134,7 @@ def build_index(in_file, out_dict, out_postings):
     open(out_dict, 'w').close()
     open(out_postings, 'w').close()
 
-    df = pd.read_csv(in_file, nrows=100)
+    df = pd.read_csv(in_file, nrows=20)
 
     df['content'] = df['content'].apply(nltk.word_tokenize).apply(lambda x: normalize_words_in_list(x))
 
@@ -134,48 +143,37 @@ def build_index(in_file, out_dict, out_postings):
     term_id_to_term = {}
     dictionary = {}
     postings_list = {}
-
-    # Dictionaries for 2-grams
-    two_gram_to_id = {}
-    id_to_two_gram = {}
-    two_gram_dictionary = {}
-    two_gram_postings = {}
-
-    # Dictionaries for 3-grams
-    three_gram_to_id = {}
-    id_to_three_gram = {}
-    three_gram_dictionary = {}
-    three_gram_postings = {}
+    documents_lengths = {}
 
     # create unique term id's that are incremented for every NEW word we discover in the full corpus.
     term_id = 1
-    two_term_id = 1
-    three_term_id = 1
 
     for index, row in df.iterrows():
+
         document_id = row['document_id']
         content = row['content']
 
-        # Create 1-grams (index words) for this document
-        create_postings_and_dictionary(content, document_id, term_id, term_to_term_id, term_id_to_term,
-                                       dictionary, postings_list, 1)
+        # dictionary that keeps track of every terms frequency in this specific document
+        # this is later converted to a sum of weighted tf^2 for use in search.py
+        document_weights = {}
 
-        """# Create 2-grams for this document
-        create_postings_and_dictionary(content, document_id, two_term_id, two_gram_to_id, id_to_two_gram,
-                                       two_gram_dictionary, two_gram_postings, 2)
+        term_id = create_positional_index(content, document_id, term_id, term_to_term_id, term_id_to_term,
+                                          dictionary, postings_list, document_weights)
 
-        # Create 3-grams for this document
-        create_postings_and_dictionary(content, document_id, three_term_id, three_gram_to_id, id_to_three_gram,
-                                       three_gram_dictionary, three_gram_postings, 3)"""
+        calculate_document_weight(document_weights, documents_lengths, document_id)
 
-    with open('term_conversion.txt', 'wb') as term_conversion:
-        pickle.dump(term_to_term_id, term_conversion)
-        pickle.dump(term_id_to_term, term_conversion)
+    """
+    dictionary      ->  term_id          : number_of_documents_term_appears_in, postings_list_position_in_file
+    postings_list   ->  [[document_id_1, terms_occurrences_in_document, <pos_1, pos_2, ...>, skip_ptr_idx]
+                         [document_id_2, terms_occurrences_in_document, <pos_1, pos_2, ...>, 0]
+                         ...]
+    """
 
     with open(out_postings, 'wb') as write_postings:
         for term_id, posting_list in postings_list.items():
             skip_list = add_skip_ptrs(posting_list, len(posting_list))
             writer_position = write_postings.tell()
+
             pickle.dump(skip_list, write_postings)
 
             # every term_id in the dictionary will be a tuple of (doc_frequency, writer offset)
@@ -186,11 +184,7 @@ def build_index(in_file, out_dict, out_postings):
 
     with open('document_lengths.txt', 'wb') as write_lengths:
         pickle.dump(len(df), write_lengths)
-
-        # TODO: Calculate vector lengths
-        # pickle.dump(documents_lengths, write_lengths)  # store LENGTH[N] for future normalization
-
-
+        pickle.dump(documents_lengths, write_lengths)  # store LENGTH[N] for future normalization
 
 
 def usage():
