@@ -42,7 +42,19 @@ def search_term(term_to_search, dictionary, term_to_term_id):
     return retrieve_postings_list(dictionary, term_id)
 
 
-def merge_postings(a, b):
+def search_dictionary(term_to_search, dictionary, term_to_term_id):
+    """
+    Converts a term (str) to a posting list. Tries to first convert the term (str) to a term id (int) and
+    then uses this term id to call a function that retrieves the posting list.
+    """
+    if term_to_search not in term_to_term_id:
+        return []  # if the query term does not exist in dictionary, return an empty posting list
+
+    term_id = term_to_term_id[term_to_search]
+    return dictionary[term_id]
+
+
+def handle_boolean_query(a, b):
     """
     Find the intersection between two lists.
     Time Complexity: O(x + y)
@@ -63,6 +75,7 @@ def merge_postings(a, b):
     while a_idx < a_length and b_idx < b_length:
         if a[a_idx][0] == b[b_idx][0]:
             resulting_postings.append(a[a_idx])
+            resulting_postings.append(b[b_idx])
             a_idx += 1
 
         elif a[a_idx][0] < b[b_idx][0]:
@@ -71,8 +84,9 @@ def merge_postings(a, b):
                 # this line is added to avoid IndexError in the following line
                 return resulting_postings
 
-            if a[a_idx + 1][2] != 0 and b[b_idx][0] - a[a[a_idx + 1][2]][0] >= 0:
-                a_idx = a[a_idx + 1][2]
+            if a[a_idx + 1][3] != 0 and b[b_idx][0] - a[a[a_idx + 1][3]][0] >= 0:
+                # use skip pointer
+                a_idx = a[a_idx + 1][3]
             else:
                 a_idx += 1
 
@@ -82,12 +96,47 @@ def merge_postings(a, b):
                 # this line is added to avoid IndexError in the following line
                 return resulting_postings
 
-            if b[b_idx + 1][2] != 0 and a[a_idx][0] - b[b[b_idx + 1][2]][0] >= 0:
-                b_idx = b[b_idx + 1][2]
+            if b[b_idx + 1][3] != 0 and a[a_idx][0] - b[b[b_idx + 1][3]][0] >= 0:
+                # use skip pointer
+                b_idx = b[b_idx + 1][3]
             else:
                 b_idx += 1
 
     return resulting_postings
+
+
+def positional_intersect(p_1, p_2, k=3):
+    """
+    Source: https://nlp.stanford.edu/IR-book/html/htmledition/img122.png
+    """
+    return []
+
+
+def handle_phrase_query(second_search_term, dictionary, term_to_term_id):
+    postings = []
+    term_frequencies = []
+
+    for term in second_search_term.split('%'):
+        dictionary_term = search_dictionary(term, dictionary, term_to_term_id)
+        posting_term = search_term(term, dictionary, term_to_term_id)
+
+        if not dictionary_term or not posting_term:
+            return []
+
+        postings.append(posting_term)
+        term_frequencies.append(dictionary_term[0])
+
+    sorted_postings_list = [x for _, x in sorted(zip(term_frequencies, postings))]
+
+    result = []
+
+    if len(sorted_postings_list) == 2:
+        result = positional_intersect(sorted_postings_list[0], sorted_postings_list[1])
+    elif len(sorted_postings_list) == 3:
+        intermediate_intersection = positional_intersect(sorted_postings_list[0], sorted_postings_list[1])
+        result = positional_intersect(intermediate_intersection, sorted_postings_list[2])
+
+    return result
 
 
 def run_search(dict_file, postings_file, queries_file, results_file):
@@ -110,9 +159,9 @@ def run_search(dict_file, postings_file, queries_file, results_file):
         # term (str) -> term id (int, 4 bytes)
         term_to_term_id = pickle.load(read_term_converter)
 
-    """with open('document_lengths.txt', 'rb') as read_lengths:
+    with open('document_lengths.txt', 'rb') as read_lengths:
         number_of_docs = pickle.load(read_lengths)
-        documents_lengths = pickle.load(read_lengths)"""
+        documents_lengths = pickle.load(read_lengths)
 
     with open(queries_file, 'r') as queries:
         all_queries = queries.readlines()
@@ -127,29 +176,37 @@ def run_search(dict_file, postings_file, queries_file, results_file):
 
             q = q.replace('\"%s\"' % m, '%s' % "%".join(match))
 
-        q = q.split()
+        q_split = q.split()
+        for idx, term in enumerate(q_split):
+            q_split[idx] = normalize_token(term) if term != 'AND' else 'AND'
 
-        for idx, term in enumerate(q):
-            print(term)
-            if not '%' in term and term != 'AND':
-                q[idx] = normalize_token(term)
-            print(q[idx])
+        if 'AND' in q_split:
+            print("THIS IS A BOOLEAN QUERY")
 
-        if 'AND' in q:
-            # treat like a boolean query
+            first_AND_idx = q_split.index('AND')
+            first_search_term = q_split[first_AND_idx - 1]
+            second_search_term = q_split[first_AND_idx + 1]
 
-            first_AND_idx = q.index('AND')
-            first_posting_list = search_term(q[first_AND_idx - 1], dictionary, term_to_term_id)
-            second_posting_list = search_term(q[first_AND_idx + 1], dictionary, term_to_term_id)
+            if '%' in first_search_term:
+                first_posting_list = handle_phrase_query(first_search_term, dictionary, term_to_term_id)
+            else:
+                first_posting_list = search_term(first_search_term, dictionary, term_to_term_id)
 
-            print(first_posting_list)
-            print(second_posting_list)
+            if '%' in second_search_term:
+                second_posting_list = handle_phrase_query(second_search_term, dictionary, term_to_term_id)
+            else:
+                second_posting_list = search_term(second_search_term, dictionary, term_to_term_id)
 
-            result = merge_postings(first_posting_list, second_posting_list)
+            print(f'FIRST:\n{first_posting_list}')
 
-            print(result)
-            print(f'first list length = {len(first_posting_list)}\nsecond list length = {len(second_posting_list)}')
-            print(f'result len {len(result)}')
+            print(f'2ND:\n{second_posting_list}')
+
+            result_postings = handle_boolean_query(first_posting_list, second_posting_list)
+
+            print(f'LenA: {len(first_posting_list)}, LenB: {len(second_posting_list)}, LenC: {len(result_postings) / 2}')
+
+            print(f'RESULT:\n{result_postings}')
+
 
 
 def usage():
