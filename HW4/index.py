@@ -134,7 +134,9 @@ def build_index(in_file, out_dict, out_postings):
     open(out_dict, 'w').close()
     open(out_postings, 'w').close()
 
-    df = pd.read_csv(in_file, nrows=20)
+    df = pd.read_csv(in_file)
+
+    number_of_documents = len(df)
 
     df['content'] = df['content'].apply(nltk.word_tokenize).apply(lambda x: normalize_words_in_list(x))
 
@@ -149,6 +151,9 @@ def build_index(in_file, out_dict, out_postings):
     term_id = 1
 
     for index, row in df.iterrows():
+
+        if index % 100 == 0:
+            print(f'Currently done with {index}/{number_of_documents} docs')
 
         document_id = row['document_id']
         content = row['content']
@@ -183,7 +188,7 @@ def build_index(in_file, out_dict, out_postings):
         pickle.dump(dictionary, write_dict)
 
     with open('document_lengths.txt', 'wb') as write_lengths:
-        pickle.dump(len(df), write_lengths)
+        pickle.dump(number_of_documents, write_lengths)
         pickle.dump(documents_lengths, write_lengths)  # store LENGTH[N] for future normalization
 
 
