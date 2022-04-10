@@ -15,7 +15,10 @@ def normalize_token(token):
     Case-folds and porter-stems a token (str word). Returns a normalized token (str word).
     """
     token = token.lower()  # case folding
-    token = PORTER_STEMMER.stem(token)  # porter-stemming
+
+    # currently not using any stemming due to the time complexity of this operation
+    #   token = PORTER_STEMMER.stem(token)  # porter-stemming
+
     return token
 
 
@@ -43,10 +46,6 @@ def search_term(term_to_search, dictionary, term_to_term_id):
 
 
 def search_dictionary(term_to_search, dictionary, term_to_term_id):
-    """
-    Converts a term (str) to a posting list. Tries to first convert the term (str) to a term id (int) and
-    then uses this term id to call a function that retrieves the posting list.
-    """
     if term_to_search not in term_to_term_id:
         return []  # if the query term does not exist in dictionary, return an empty posting list
 
@@ -54,7 +53,7 @@ def search_dictionary(term_to_search, dictionary, term_to_term_id):
     return dictionary[term_id]
 
 
-def handle_boolean_query(a, b):
+def handle_boolean_query(a, b, save_both_docs=False):
     """
     Find the intersection between two lists.
     Time Complexity: O(x + y)
@@ -75,7 +74,8 @@ def handle_boolean_query(a, b):
     while a_idx < a_length and b_idx < b_length:
         if a[a_idx][0] == b[b_idx][0]:
             resulting_postings.append(a[a_idx])
-            resulting_postings.append(b[b_idx])
+            if save_both_docs:
+                resulting_postings.append(b[b_idx])
             a_idx += 1
 
         elif a[a_idx][0] < b[b_idx][0]:
@@ -105,18 +105,11 @@ def handle_boolean_query(a, b):
     return resulting_postings
 
 
-def positional_intersect(p_1, p_2, k=3):
-    """
-    Source: https://nlp.stanford.edu/IR-book/html/htmledition/img122.png
-    """
-    return []
-
-
-def handle_phrase_query(second_search_term, dictionary, term_to_term_id):
+def handle_phrase_query(phrase_search_term_joined, dictionary, term_to_term_id):
     postings = []
     term_frequencies = []
 
-    for term in second_search_term.split('%'):
+    for term in phrase_search_term_joined.split('%'):
         dictionary_term = search_dictionary(term, dictionary, term_to_term_id)
         posting_term = search_term(term, dictionary, term_to_term_id)
 
@@ -131,12 +124,85 @@ def handle_phrase_query(second_search_term, dictionary, term_to_term_id):
     result = []
 
     if len(sorted_postings_list) == 2:
-        result = positional_intersect(sorted_postings_list[0], sorted_postings_list[1])
+        result = phrase_intersection(sorted_postings_list[0], sorted_postings_list[1])
     elif len(sorted_postings_list) == 3:
-        intermediate_intersection = positional_intersect(sorted_postings_list[0], sorted_postings_list[1])
-        result = positional_intersect(intermediate_intersection, sorted_postings_list[2])
+        intermediate_intersection = phrase_intersection(sorted_postings_list[0], sorted_postings_list[1])
+        result = phrase_intersection(intermediate_intersection, sorted_postings_list[2])
+
+    print(f'PhraseResult: {result}')
 
     return result
+
+
+def phrase_intersection(p_1, p_2):
+    """
+    Proximity intersection of posting lists p1 and p2 where the two words appear at the
+    correct distance from each other.
+    """
+    merged_postings = handle_boolean_query(p_1, p_2, True)
+
+    result_posting = []
+
+    i = 0
+    while i < len(merged_postings):
+        document_temp_list = [merged_postings[i][0], 0, [], 0]
+        this_doc_is_relevant = False
+
+        for position_x in merged_postings[i][2]:
+            for position_y in merged_postings[i+1][2]:
+                if position_x == position_y - 1:
+                    document_temp_list[2].append(position_y)
+                    this_doc_is_relevant = True
+
+        if this_doc_is_relevant:
+            result_posting.append(document_temp_list)
+
+        i += 2  # want to increment i by two every iteration.
+
+    return result_posting
+
+
+def handle_query(query, dictionary, term_to_term_id, boolean_query=False, merged_posting_list=None):
+    if merged_posting_list is None:
+        merged_posting_list = []
+
+    if 'AND' in query or boolean_query:
+        print("Treat all of the query as a boolean query")
+
+        first_AND_idx = query.index('AND')
+        right_search_term = query[first_AND_idx + 1]
+
+        if not merged_posting_list:
+            left_search_term = query[first_AND_idx - 1]
+
+            query.pop(0)  # remove the left search term from the query
+
+            if '%' in left_search_term:
+                merged_posting_list = handle_phrase_query(left_search_term, dictionary, term_to_term_id)
+            else:
+                merged_posting_list = search_term(left_search_term, dictionary, term_to_term_id)
+
+        if '%' in right_search_term:
+            right_posting_list = handle_phrase_query(right_search_term, dictionary, term_to_term_id)
+        else:
+            right_posting_list = search_term(right_search_term, dictionary, term_to_term_id)
+
+        query.pop(0)  # remove the 'AND' term from the query
+        query.pop(0)  # remove the right search term from the query
+
+        result_postings = handle_boolean_query(merged_posting_list, right_posting_list)
+
+        print(f'REMAINING QUERY: {query}')
+        # if we still have not gone through all of the query, we recur.
+        if query:
+            return handle_query(query, dictionary, term_to_term_id, True, result_postings)
+        else:
+            return result_postings
+
+    else:
+        print("Treat all of the query as a free text query [like HW3]")
+        # TODO: Act implement
+        return search_term(query[0], dictionary, term_to_term_id)
 
 
 def run_search(dict_file, postings_file, queries_file, results_file):
@@ -174,39 +240,21 @@ def run_search(dict_file, postings_file, queries_file, results_file):
             for word in m.split():
                 match.append(normalize_token(word))
 
+            # in case of a phrase query; concatenate the words in the phrase with a % between them.
             q = q.replace('\"%s\"' % m, '%s' % "%".join(match))
 
         q_split = q.split()
         for idx, term in enumerate(q_split):
             q_split[idx] = normalize_token(term) if term != 'AND' else 'AND'
 
-        if 'AND' in q_split:
-            print("THIS IS A BOOLEAN QUERY")
+        x = handle_query(q_split, dictionary, term_to_term_id)
 
-            first_AND_idx = q_split.index('AND')
-            first_search_term = q_split[first_AND_idx - 1]
-            second_search_term = q_split[first_AND_idx + 1]
+        res = ''
+        for post in x:
+            res += str(post[0]) + '\n'
 
-            if '%' in first_search_term:
-                first_posting_list = handle_phrase_query(first_search_term, dictionary, term_to_term_id)
-            else:
-                first_posting_list = search_term(first_search_term, dictionary, term_to_term_id)
-
-            if '%' in second_search_term:
-                second_posting_list = handle_phrase_query(second_search_term, dictionary, term_to_term_id)
-            else:
-                second_posting_list = search_term(second_search_term, dictionary, term_to_term_id)
-
-            print(f'FIRST:\n{first_posting_list}')
-
-            print(f'2ND:\n{second_posting_list}')
-
-            result_postings = handle_boolean_query(first_posting_list, second_posting_list)
-
-            print(f'LenA: {len(first_posting_list)}, LenB: {len(second_posting_list)}, LenC: {len(result_postings) / 2}')
-
-            print(f'RESULT:\n{result_postings}')
-
+        with open(results_file, 'a') as write_result:
+            write_result.write(res)
 
 
 def usage():
