@@ -2,10 +2,16 @@
 import math
 import os
 import pickle
+import time
+
 import nltk
 import sys
 import getopt
 import csv
+
+import ast
+
+import pandas
 import pandas as pd  # remember to include pandas in the submission
 
 PORTER_STEMMER = nltk.stem.porter.PorterStemmer()
@@ -58,7 +64,10 @@ def normalize_token(token):
     Case-folds and porter-stems a token (str word). Returns a normalized token (str word).
     """
     token = token.lower()  # case folding
-    token = PORTER_STEMMER.stem(token)  # porter-stemming
+
+    # no stemming at the moment since it is very very slow.
+    #token = PORTER_STEMMER.stem(token)  # porter-stemming
+
     return token
 
 
@@ -73,10 +82,10 @@ def create_positional_index(content, document_id, term_id, term_to_term_id, term
     we have a term_id as key:
     dict[term_id] = doc_id:[54, 1337], doc_id: [123, 456, 789]
     """
-
     positional_idx = 0
     for token in content:
         positional_idx += 1
+
         if token not in term_to_term_id:
             # if it is the first time we see this term, we add it to our dictionaries of terms and term ids
             term_to_term_id[token] = term_id
@@ -88,6 +97,7 @@ def create_positional_index(content, document_id, term_id, term_to_term_id, term
         if tokens_term_id not in dictionary:
             # first time seeing it, so it has only been seen in the current document (i.e. doc freq = 1)
             dictionary[tokens_term_id] = 1
+
             postings_list[tokens_term_id] = {document_id: [positional_idx]}
             # initialise the dictionary that maps doc_ids to positions.
 
@@ -123,6 +133,45 @@ def calculate_document_weight(document_weight, out_dictionary, document_id):
     out_dictionary[document_id] = doc_wt_sum
 
 
+def pre_process_file(in_file_path):
+    """
+    Takes the file path to a .csv file, reads this file and converts it to a Pandas dataframe. Then writes this
+    dataframe to a file for use when indexing.
+    """
+
+    print(f'Reading file {in_file_path} ...')
+    df = pd.read_csv(in_file_path)
+
+    number_of_documents = len(df)
+
+    del df['title']
+    del df['date_posted']
+    del df['court']
+
+    print(f'Total number of documents: {number_of_documents}')
+
+    start_tokenizing_time = time.time()
+    print(f'Tokenizing all words in all documents, this may take a while ...')
+    # df['content'] = df['content'].apply(nltk.word_tokenize)
+
+    # The regexp tokenization is benchmarked to be much faster than what was implemented before:
+    # src: https://towardsdatascience.com/benchmarking-python-nlp-tokenizers-3ac4735100c5
+    df['content'] = df['content'].apply(lambda x: nltk.regexp_tokenize(x, pattern='\s+', gaps=True))
+
+    start_normalizing_time = time.time()
+    print(f'Time elapsed for tokenizing: {start_normalizing_time - start_tokenizing_time}, '
+          f'which is {(start_normalizing_time - start_tokenizing_time) / number_of_documents} per doc')
+
+    print(f'Normalizing all tokens in all documents, this will take a while ...')
+    df['content'] = df['content'].apply(lambda x: normalize_words_in_list(x))
+
+    stop_normalizing_time = time.time()
+    print(f'Time elapsed for normalizing: {stop_normalizing_time - start_normalizing_time}, '
+          f'which is {(stop_normalizing_time - start_normalizing_time) / number_of_documents} per doc')
+
+    df.to_csv('dataframe_processed.csv')
+    print(f'Wrote the processed dataframe to file.')
+
 def build_index(in_file, out_dict, out_postings):
     """
     build index from documents stored in the input directory,
@@ -134,11 +183,16 @@ def build_index(in_file, out_dict, out_postings):
     open(out_dict, 'w').close()
     open(out_postings, 'w').close()
 
-    df = pd.read_csv(in_file)
+    preprocess_file = False
+    write_index_to_files = True
 
+    if preprocess_file:
+        pre_process_file(in_file)
+
+    ### START OF INDEXING ###
+
+    df = pandas.read_csv('dataframe_processed.csv')
     number_of_documents = len(df)
-
-    df['content'] = df['content'].apply(nltk.word_tokenize).apply(lambda x: normalize_words_in_list(x))
 
     # Dictionaries for 1-grams
     term_to_term_id = {}
@@ -150,17 +204,36 @@ def build_index(in_file, out_dict, out_postings):
     # create unique term id's that are incremented for every NEW word we discover in the full corpus.
     term_id = 1
 
+    already_indexed_doc = []
+
+    previous_time = time.time()
+
+    print(f'Creating index ...')
     for index, row in df.iterrows():
 
-        if index % 100 == 0:
-            print(f'Currently done with {index}/{number_of_documents} docs')
+        if (index + 1) % 100 == 0:
+            latest_time = time.time()
+
+            print(f'Currently done with {index + 1}/{number_of_documents} docs \n'
+                  f'These docs took: {latest_time - previous_time}')
+
+            previous_time = latest_time
 
         document_id = row['document_id']
         content = row['content']
 
+        # convert string representation of content to a list
+        content = ast.literal_eval(content)
+
         # dictionary that keeps track of every terms frequency in this specific document
         # this is later converted to a sum of weighted tf^2 for use in search.py
         document_weights = {}
+
+        if document_id in already_indexed_doc:
+            print('This document have already been indexed')
+            continue    # skip this document by going to the next iteration in the for loop
+
+        already_indexed_doc.append(document_id)  # keep track of all document id that have been indexed already
 
         term_id = create_positional_index(content, document_id, term_id, term_to_term_id, term_id_to_term,
                                           dictionary, postings_list, document_weights)
@@ -174,22 +247,28 @@ def build_index(in_file, out_dict, out_postings):
                          ...]
     """
 
-    with open(out_postings, 'wb') as write_postings:
-        for term_id, posting_list in postings_list.items():
-            skip_list = add_skip_ptrs(posting_list, len(posting_list))
-            writer_position = write_postings.tell()
+    if write_index_to_files:
+        with open(out_postings, 'wb') as write_postings:
+            for term_id, posting_list in postings_list.items():
+                skip_list = add_skip_ptrs(posting_list, len(posting_list))
+                writer_position = write_postings.tell()
 
-            pickle.dump(skip_list, write_postings)
+                pickle.dump(skip_list, write_postings)
 
-            # every term_id in the dictionary will be a tuple of (doc_frequency, writer offset)
-            dictionary[term_id] = (dictionary[term_id], writer_position)
+                # every term_id in the dictionary will be a tuple of (doc_frequency, writer offset)
+                dictionary[term_id] = (dictionary[term_id], writer_position)
 
-    with open(out_dict, 'wb') as write_dict:
-        pickle.dump(dictionary, write_dict)
+        with open(out_dict, 'wb') as write_dict:
+            pickle.dump(dictionary, write_dict)
 
-    with open('document_lengths.txt', 'wb') as write_lengths:
-        pickle.dump(number_of_documents, write_lengths)
-        pickle.dump(documents_lengths, write_lengths)  # store LENGTH[N] for future normalization
+        with open('document_lengths.txt', 'wb') as write_lengths:
+            pickle.dump(number_of_documents, write_lengths)
+            pickle.dump(documents_lengths, write_lengths)  # store LENGTH[N] for future normalization
+
+        with open('term_conversion.txt', 'wb') as write_term_converter:
+            # term (str) -> term id (int, 4 bytes)
+            pickle.dump(term_to_term_id, write_term_converter)
+            pickle.dump(term_to_term_id, write_term_converter)
 
 
 def usage():
