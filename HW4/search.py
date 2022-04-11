@@ -10,6 +10,33 @@ from heapq import heappop, heappush, heapify
 PORTER_STEMMER = nltk.stem.porter.PorterStemmer()
 
 
+class TrackScore:
+    def __init__(self, doc_id, score):
+        self.document_id = doc_id
+        self.score = score
+
+    def __str__(self):
+        # can uncomment the last lines for debugging of the scores.
+        return str(self.document_id)  # + " (" + str(self.score) + ")"
+
+    def __lt__(self, other):
+        """
+        Override the normal less than function for our class. Since available heap implementations are min-heaps,
+        this simple tricks turns it into a max-heap.
+        """
+        if self.score != other.score:
+            return self.score > other.score
+        else:
+            # if two documents have the same relevance, then we sort them by document id instead (in increasing order)
+            return self.document_id < other.document_id
+
+    def __eq__(self, other):
+        return self.score == other.score
+
+    def __repr__(self):
+        return str(self.score)
+
+
 def normalize_token(token):
     """
     Case-folds and porter-stems a token (str word). Returns a normalized token (str word).
@@ -149,7 +176,7 @@ def phrase_intersection(p_1, p_2):
         this_doc_is_relevant = False
 
         for position_x in merged_postings[i][2]:
-            for position_y in merged_postings[i+1][2]:
+            for position_y in merged_postings[i + 1][2]:
                 if position_x == position_y - 1:
                     document_temp_list[2].append(position_y)
                     this_doc_is_relevant = True
@@ -162,6 +189,20 @@ def phrase_intersection(p_1, p_2):
     return result_posting
 
 
+def write_results_to_file(results_file, heap, number_of_results=None):
+
+    if number_of_results:
+        # only write the top X results, or less if there isn't 10 good matches.
+        number_of_results = number_of_results if len(heap) > number_of_results else len(heap)
+    else:
+        number_of_results = len(heap)
+
+    out_string = " ".join([str(heappop(heap)) for _ in range(number_of_results)]) + '\n'
+
+    with open(results_file, 'a') as write_result:
+        write_result.write(out_string)
+
+
 def handle_query(query, dictionary, term_to_term_id, boolean_query=False, merged_posting_list=None):
     if merged_posting_list is None:
         merged_posting_list = []
@@ -169,7 +210,12 @@ def handle_query(query, dictionary, term_to_term_id, boolean_query=False, merged
     if 'AND' in query or boolean_query:
         print("Treat all of the query as a boolean query")
 
-        first_AND_idx = query.index('AND')
+        first_AND_idx = query.index('AND')  # raises ValueError if not found.
+
+        if len(query) < 2:
+            # error in the input. just return the results this far / or an empty list as it won't break anything.
+            return merged_posting_list
+
         right_search_term = query[first_AND_idx + 1]
 
         if not merged_posting_list:
@@ -201,7 +247,9 @@ def handle_query(query, dictionary, term_to_term_id, boolean_query=False, merged
 
     else:
         print("Treat all of the query as a free text query [like HW3]")
-        # TODO: Act implement
+        # TODO: implement free text query vector ranking logics.
+
+        # temporarily return everything.
         return search_term(query[0], dictionary, term_to_term_id)
 
 
@@ -247,14 +295,21 @@ def run_search(dict_file, postings_file, queries_file, results_file):
         for idx, term in enumerate(q_split):
             q_split[idx] = normalize_token(term) if term != 'AND' else 'AND'
 
-        x = handle_query(q_split, dictionary, term_to_term_id)
+        search_results = handle_query(q_split, dictionary, term_to_term_id, matches is not None)
 
-        res = ''
-        for post in x:
-            res += str(post[0]) + '\n'
+        results_heap = []
+        heapify(results_heap)
 
-        with open(results_file, 'a') as write_result:
-            write_result.write(res)
+        for result in search_results:
+            # TrackScore is a custom class that is used to be able to define our own definition of "<" and "=" between
+            # objects and also the string representation of such objects.
+            new_score = TrackScore(result[0], 0)    # for now, just assign a score of zero for every document.
+
+            # this max-heap have the score of ALL documents, uses the heapq (min-heap) module but turns into a
+            # max-heap by changing the definitions of lt and eq with TrackScore class.
+            heappush(results_heap, new_score)
+
+        write_results_to_file(results_file, results_heap)
 
 
 def usage():
