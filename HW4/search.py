@@ -17,7 +17,7 @@ class TrackScore:
 
     def __str__(self):
         # can uncomment the last lines for debugging of the scores.
-        return str(self.document_id) + " (" + str(self.score) + ")"
+        return str(self.document_id) #+ " (" + str(self.score) + ")"
 
     def __lt__(self, other):
         """
@@ -101,7 +101,6 @@ def merge_boolean_query(a, b, save_both_docs=False):
     Find the intersection between two lists.
     Time Complexity: O(x + y)
     """
-    print("BEGIN MERGE ...")
     resulting_postings = []
 
     # Base case. An AND operation always return null (empty list) if one of the lists are empty
@@ -331,8 +330,6 @@ def handle_boolean_query(query, dictionary, term_to_term_id, boolean_query=False
         merged_posting_list = []
 
     if 'AND' in query or boolean_query:
-        print("Treat all of the query as a boolean query")
-
         first_AND_idx = query.index('AND')  # raises ValueError if not found.
 
         if len(query) < 2:
@@ -370,7 +367,6 @@ def handle_boolean_query(query, dictionary, term_to_term_id, boolean_query=False
 
         document_term_freq = filter_term_freq(document_term_freq, result_postings)
 
-        print(f'REMAINING QUERY: {query}')
         # if we still have not gone through all of the query, we recur.
         if query:
             return handle_boolean_query(query, dictionary, term_to_term_id, True, result_postings, document_term_freq)
@@ -403,8 +399,6 @@ def boolean_and_freq_to_score(frequency_vector, priority_constant=6):
     deviation_score = std_dev_sq**(1/priority_constant)
 
     score = sum(frequency_vector) / deviation_score
-
-    print(f'SCORE: {score}')
 
     return score
 
