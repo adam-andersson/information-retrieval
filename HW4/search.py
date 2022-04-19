@@ -7,6 +7,11 @@ import sys
 import getopt
 from heapq import heappop, heappush, heapify
 
+"""
+nltk.download('wordnet')
+nltk.download('omw-1.4')
+"""
+
 PORTER_STEMMER = nltk.stem.porter.PorterStemmer()
 
 
@@ -47,6 +52,65 @@ def normalize_token(token):
     #   token = PORTER_STEMMER.stem(token)  # porter-stemming
 
     return token
+
+
+def lesk_algorithm_simple(query, word):
+    """
+    Implementation from pseudo-code found in: https://www.youtube.com/watch?v=wxZwML6Gs3o&ab_channel=NatalieParde
+    """
+    all_senses = nltk.corpus.wordnet.synsets(word)
+
+    if not all_senses:
+        return None
+
+    best_sense = all_senses[0]
+    max_overlap = 0
+
+    for sense in all_senses:
+        signature = set(nltk.tokenize.word_tokenize(sense.definition()))
+
+        for example in sense.examples():
+            signature.union(nltk.tokenize.word_tokenize(example))
+
+        overlap = signature.intersection(set(query))
+
+        if len(overlap) > max_overlap:
+            max_overlap = len(overlap)
+            best_sense = sense
+
+    synonym_choices = [lemma.name() for lemma in best_sense.lemmas()]
+
+    for synonym in synonym_choices:
+        if synonym.isalpha() and synonym != word:
+            # return the first match that is alphanumeric (i.e. not a word that includes spaces)
+            # and that is not the word we are searching a synonym for.
+            return synonym
+
+    return None
+
+
+def expand_query(query_list):
+    """
+    The algorithm takes a list of query terms and appends a list with one synonym for each non-stopword term
+    in the query (if not already in the query).
+    Example: [quiet, phone, call] -> [quiet, phone, call, quieten, telephone].
+    """
+
+    stop_words = set(nltk.corpus.stopwords.words('english'))
+    filtered_query = [w for w in query_list if not w.lower() in stop_words]
+
+    expanded_query = []
+
+    for i in range(len(filtered_query)):
+        expand_term = lesk_algorithm_simple(query_list, filtered_query[i])
+        if expand_term:
+            expanded_query.append(expand_term)
+
+    new_query = query_list + expanded_query
+
+    print(f'Previous query: {" ".join(list(query_list))} \nExpanded query: {" ".join(list(expanded_query))}')
+
+    return new_query
 
 
 def retrieve_postings_list(dictionary, term_id):
@@ -442,11 +506,15 @@ def run_search(dict_file, postings_file, queries_file, results_file):
             q = q.replace('\"%s\"' % m, '%s' % "%".join(match))
 
         q_split = q.split()
-        for idx, term in enumerate(q_split):
-            q_split[idx] = normalize_token(term) if term != 'AND' else 'AND'
 
         # we know that the query should be treated as a boolean query if it includes quotes or the "AND" operator.
         is_boolean_query = len(matches) != 0 or 'AND' in q_split
+
+        if not is_boolean_query:
+            q_split = expand_query(q_split)
+
+        for idx, term in enumerate(q_split):
+            q_split[idx] = normalize_token(term) if term != 'AND' else 'AND'
 
         results_heap = []
         heapify(results_heap)
