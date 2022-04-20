@@ -22,10 +22,12 @@ ssh from local to sunfire
 ```
     ssh e0923089@sunfire.comp.nus.edu.sg
 ```
+
 ssh from sunfire to node (xcna0)
 ```
     ssh xcna0.comp.nus.edu.sg
 ```
+
 send file from node to sunfire
 ```
     scp -r folder_to_send/ e0923089@sunfire.comp.nus.edu.sg:
@@ -34,4 +36,9 @@ send file from node to sunfire
 fetch file from sunfire to local machine
 ```
     scp -r e0923089@sunfire.comp.nus.edu.sg:folder_to_send/ /Users/adamandersson/Desktop/
+```
+
+run indexing on node in the background, without needing to keep ssh window open (not confirmed)
+```
+    nohup python3 index.py -i dataset.csv -d dictionary_bg.txt -p postings_bg.txt &
 ```
