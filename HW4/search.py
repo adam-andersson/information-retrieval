@@ -12,6 +12,7 @@ PORTER_STEMMER = nltk.stem.porter.PorterStemmer()
 DOCUMENT_LENGTHS_FILEPATH = 'document_lengths.txt'
 TERM_CONVERSION_FILEPATH = 'term_conversion.txt'
 USE_STEMMING = False
+USE_THESAURUS_QE = False
 
 class TrackScore:
     def __init__(self, doc_id, score):
@@ -534,7 +535,8 @@ def run_search(dict_file, postings_file, queries_file, results_file):
         # we know that the query should be treated as a boolean query if it includes quotes or the "AND" operator.
         is_boolean_query = len(matches) != 0 or 'AND' in q_split
 
-        if not is_boolean_query:
+        if not is_boolean_query and USE_THESAURUS_QE:
+            # thesaurus-based query expansion does not seem to improve scores (actually makes it worse) so we do not use it
             q_split = expand_query(q_split)
 
         for idx, term in enumerate(q_split):
