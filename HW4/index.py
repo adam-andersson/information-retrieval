@@ -9,13 +9,17 @@ import sys
 import getopt
 import csv
 
-import ast
-
-import pandas
-import pandas as pd  # remember to include pandas in the submission
 
 PORTER_STEMMER = nltk.stem.porter.PorterStemmer()
 STOP_WORDS = set(nltk.corpus.stopwords.words('english') + [".", ",", ";", ":"])
+
+DATAFRAME_PROCESSED_FILEPATH = 'dataframe_processed.csv'
+DOCUMENT_LENGTHS_FILEPATH = 'document_lengths.txt'
+TERM_CONVERSION_FILEPATH = 'term_conversion.txt'
+
+PREPROCESS_FILE = True
+WRITE_INDEX_TO_FILE = True
+USE_STEMMING = False
 
 
 def create_ngram(sentence, n):
@@ -47,7 +51,6 @@ def add_skip_ptrs(posting_list, length_of_posting_list):
 
         if position_index % skip_distance == 0 and position_index != length_of_posting_list - 1 \
                 and position_index + skip_distance < length_of_posting_list:
-
             postings_list_with_skip_ptr[-1][3] = position_index + skip_distance
 
         position_index += 1
@@ -65,8 +68,9 @@ def normalize_token(token):
     """
     token = token.lower()  # case folding
 
-    # no stemming at the moment since it is very very slow.
-    #token = PORTER_STEMMER.stem(token)  # porter-stemming
+    # currently not using any stemming due to the time complexity of this operation
+    if USE_STEMMING:
+        token = PORTER_STEMMER.stem(token)  # porter-stemming
 
     return token
 
@@ -139,38 +143,49 @@ def pre_process_file(in_file_path):
     dataframe to a file for use when indexing.
     """
 
-    print(f'Reading file {in_file_path} ...')
-    df = pd.read_csv(in_file_path)
+    # increase maximum field size to solve the following error:
+    # _csv.Error: field larger than field limit (131072)
+    csv.field_size_limit(sys.maxsize)
 
-    number_of_documents = len(df)
+    csvreader = csv.reader(open(in_file_path, 'r'))
+    header = next(csvreader)
 
-    del df['title']
-    del df['date_posted']
-    del df['court']
+    csvreader = list(csvreader)
 
-    print(f'Total number of documents: {number_of_documents}')
+    df = []
+    for row in csvreader:
+        # The regexp tokenization is benchmarked to be much faster than what was implemented before:
+        # src: https://towardsdatascience.com/benchmarking-python-nlp-tokenizers-3ac4735100c5
+        tokenized_content = nltk.regexp_tokenize(row[2], pattern='\s+', gaps=True)
 
-    start_tokenizing_time = time.time()
-    print(f'Tokenizing all words in all documents, this may take a while ...')
-    # df['content'] = df['content'].apply(nltk.word_tokenize)
+        normalized_content = normalize_words_in_list(tokenized_content)
 
-    # The regexp tokenization is benchmarked to be much faster than what was implemented before:
-    # src: https://towardsdatascience.com/benchmarking-python-nlp-tokenizers-3ac4735100c5
-    df['content'] = df['content'].apply(lambda x: nltk.regexp_tokenize(x, pattern='\s+', gaps=True))
+        df.append([int(row[0]), normalized_content])  # add doc id and normalized & tokenized content fields
 
-    start_normalizing_time = time.time()
-    print(f'Time elapsed for tokenizing: {start_normalizing_time - start_tokenizing_time}, '
-          f'which is {(start_normalizing_time - start_tokenizing_time) / number_of_documents} per doc')
+    with open(DATAFRAME_PROCESSED_FILEPATH, 'w') as df_file:
+        write = csv.writer(df_file)
+        write.writerow([header[0], header[2]])  # write the header field to the file.
+        write.writerows(df)  # write the doc_id, processed content fields to the file.
 
-    print(f'Normalizing all tokens in all documents, this will take a while ...')
-    df['content'] = df['content'].apply(lambda x: normalize_words_in_list(x))
-
-    stop_normalizing_time = time.time()
-    print(f'Time elapsed for normalizing: {stop_normalizing_time - start_normalizing_time}, '
-          f'which is {(stop_normalizing_time - start_normalizing_time) / number_of_documents} per doc')
-
-    df.to_csv('dataframe_processed.csv')
     print(f'Wrote the processed dataframe to file.')
+    return df
+
+
+def open_processed_file(file_path=DATAFRAME_PROCESSED_FILEPATH):
+
+    # increase maximum field size to solve the following error:
+    # _csv.Error: field larger than field limit (131072)
+    csv.field_size_limit(sys.maxsize)
+
+    csvreader = csv.reader(open(file_path, 'r'))
+    header = next(csvreader)
+
+    df = list(csvreader)
+    for i in range(len(df)):
+        df[i][0] = int(df[i][0])
+
+    return df
+
 
 def build_index(in_file, out_dict, out_postings):
     """
@@ -180,18 +195,14 @@ def build_index(in_file, out_dict, out_postings):
 
     # Wipe all contents from the files before running the code. Because we are appending (open with 'ab')
     # dictionaries from every block, we want to start from clean files.
-    open(out_dict, 'w').close()
-    open(out_postings, 'w').close()
+    if WRITE_INDEX_TO_FILE:
+        open(out_dict, 'w').close()
+        open(out_postings, 'w').close()
 
-    preprocess_file = False
-    write_index_to_files = True
-
-    if preprocess_file:
-        pre_process_file(in_file)
+    df = pre_process_file(in_file) if PREPROCESS_FILE else open_processed_file()
 
     ### START OF INDEXING ###
 
-    df = pandas.read_csv('dataframe_processed.csv')
     number_of_documents = len(df)
 
     # Dictionaries for 1-grams
@@ -207,23 +218,17 @@ def build_index(in_file, out_dict, out_postings):
     already_indexed_doc = []
 
     previous_time = time.time()
+    currently_process_document_idx = 0
 
     print(f'Creating index ...')
-    for index, row in df.iterrows():
-
-        if (index + 1) % 100 == 0:
+    for document_id, content in df:
+        if (currently_process_document_idx + 1) % 100 == 0:
             latest_time = time.time()
 
-            print(f'Currently done with {index + 1}/{number_of_documents} docs \n'
+            print(f'Currently done with {currently_process_document_idx + 1}/{number_of_documents} docs \n'
                   f'These docs took: {latest_time - previous_time}')
 
             previous_time = latest_time
-
-        document_id = row['document_id']
-        content = row['content']
-
-        # convert string representation of content to a list
-        content = ast.literal_eval(content)
 
         # dictionary that keeps track of every terms frequency in this specific document
         # this is later converted to a sum of weighted tf^2 for use in search.py
@@ -231,7 +236,7 @@ def build_index(in_file, out_dict, out_postings):
 
         if document_id in already_indexed_doc:
             print('This document have already been indexed')
-            continue    # skip this document by going to the next iteration in the for loop
+            continue  # skip this document by going to the next iteration in the for loop
 
         already_indexed_doc.append(document_id)  # keep track of all document id that have been indexed already
 
@@ -239,6 +244,7 @@ def build_index(in_file, out_dict, out_postings):
                                           dictionary, postings_list, document_weights)
 
         calculate_document_weight(document_weights, documents_lengths, document_id)
+        currently_process_document_idx += 1
 
     """
     dictionary      ->  term_id          : number_of_documents_term_appears_in, postings_list_position_in_file
@@ -247,7 +253,7 @@ def build_index(in_file, out_dict, out_postings):
                          ...]
     """
 
-    if write_index_to_files:
+    if WRITE_INDEX_TO_FILE:
         with open(out_postings, 'wb') as write_postings:
             for term_id, posting_list in postings_list.items():
                 skip_list = add_skip_ptrs(posting_list, len(posting_list))
@@ -261,11 +267,11 @@ def build_index(in_file, out_dict, out_postings):
         with open(out_dict, 'wb') as write_dict:
             pickle.dump(dictionary, write_dict)
 
-        with open('document_lengths.txt', 'wb') as write_lengths:
+        with open(DOCUMENT_LENGTHS_FILEPATH, 'wb') as write_lengths:
             pickle.dump(number_of_documents, write_lengths)
             pickle.dump(documents_lengths, write_lengths)  # store LENGTH[N] for future normalization
 
-        with open('term_conversion.txt', 'wb') as write_term_converter:
+        with open(TERM_CONVERSION_FILEPATH, 'wb') as write_term_converter:
             # term (str) -> term id (int, 4 bytes)
             pickle.dump(term_to_term_id, write_term_converter)
             pickle.dump(term_to_term_id, write_term_converter)
@@ -284,11 +290,11 @@ except getopt.GetoptError:
     sys.exit(2)
 
 for o, a in opts:
-    if o == '-i':       # input directory
+    if o == '-i':  # input directory
         input_csv = a
-    elif o == '-d':     # dictionary file
+    elif o == '-d':  # dictionary file
         output_file_dictionary = a
-    elif o == '-p':     # postings file
+    elif o == '-p':  # postings file
         output_file_postings = a
     else:
         assert False, "unhandled option"
