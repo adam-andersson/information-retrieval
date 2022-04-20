@@ -7,13 +7,11 @@ import sys
 import getopt
 from heapq import heappop, heappush, heapify
 
-"""
-nltk.download('wordnet')
-nltk.download('omw-1.4')
-"""
-
 PORTER_STEMMER = nltk.stem.porter.PorterStemmer()
 
+DOCUMENT_LENGTHS_FILEPATH = 'document_lengths.txt'
+TERM_CONVERSION_FILEPATH = 'term_conversion.txt'
+USE_STEMMING = False
 
 class TrackScore:
     def __init__(self, doc_id, score):
@@ -49,7 +47,8 @@ def normalize_token(token):
     token = token.lower()  # case folding
 
     # currently not using any stemming due to the time complexity of this operation
-    #   token = PORTER_STEMMER.stem(token)  # porter-stemming
+    if USE_STEMMING:
+        token = PORTER_STEMMER.stem(token)  # porter-stemming
 
     return token
 
@@ -255,12 +254,15 @@ def phrase_intersection(p_1, p_2):
 
     i = 0
     while i < len(merged_postings):
+        # creates a new posting list that mimics the form of a term's posting list
+        # [document_id, phrase_frequency, phrase_position, skip_ptr (None / 0)]
         document_temp_list = [merged_postings[i][0], 0, [], 0]
         this_doc_is_relevant = False
 
         for position_x in merged_postings[i][2]:
             for position_y in merged_postings[i + 1][2]:
                 if position_x == position_y - 1:
+                    document_temp_list[1] += 1  # add one to the term frequency
                     document_temp_list[2].append(position_y)
                     this_doc_is_relevant = True
 
@@ -305,61 +307,6 @@ def add_term_freq_to_dictionary(posting_list, dictionary, initial_creation=False
     return dictionary
 
 
-def handle_ranked_retrieval(query, dictionary, term_to_term_id, number_of_docs):
-    """
-    Takes a query and calculates tf-idf for this query in all documents that contains this term.
-    Returns a dictionary containing all documents that appeared as key, and the sum of all tf-idf s for each
-    document as value.
-    """
-    scores_pre_normalize = {}
-    sum_weight_q = 0
-
-    for q_term in query:
-
-        # --- IDF (QUERY) --- #
-        if q_term in term_to_term_id:
-            term_id = term_to_term_id[q_term]
-            doc_freq = dictionary[term_id][0]
-
-            # idf query -> parameters: total number of documents and document frequency
-            idf_qt = calculate_idf(number_of_docs, doc_freq)
-        else:
-            # the idf for the query term is set to 0 if it appears in NO documents
-            idf_qt = 0
-
-        # --- TERM FREQUENCY (QUERY) --- #
-        term_freq_qt = query.count(q_term)
-        tf_qt = calculate_tf(term_freq_qt)
-
-        # --- TF x IDF (QUERY) --- #
-        weight_qt = tf_qt * idf_qt
-
-        # add this weight (squared) to the total squared weight of this query. This is used in cosine normalization
-        sum_weight_q += weight_qt ** 2
-
-        # in case of no posting list belonging to query term t, this will always return an empty list "[]"
-        # which will be caught in the following if-statement.
-        posting_t = search_term(q_term, dictionary, term_to_term_id)
-
-        # if this is a search query term that we do not have in our dictionary
-        # otherwise, the score contribution after multiplication will always be zero for this term.
-        if posting_t:
-            for posting in posting_t:
-                doc_id = posting[0]
-
-                if doc_id not in scores_pre_normalize:
-                    scores_pre_normalize[doc_id] = 0
-
-                term_freq_td = posting[1]
-                tf_dt = calculate_tf(term_freq_td)
-
-                # accumulate the product of non-normalized wt_doc and wt_query for every document
-                # this will later be normalized using cosine normalization.
-                scores_pre_normalize[doc_id] += weight_qt * tf_dt
-
-    return scores_pre_normalize, sum_weight_q
-
-
 def filter_term_freq(dictionary, results):
     """
     Updates the document term frequency dictionary to only include the documents that are still matching
@@ -380,8 +327,7 @@ def filter_term_freq(dictionary, results):
     return new_dict
 
 
-def handle_boolean_query(query, dictionary, term_to_term_id, boolean_query=False, merged_posting_list=None,
-                         document_term_freq=None):
+def handle_boolean_query(query, dictionary, term_to_term_id, boolean_query=False, merged_posting_list=None, document_term_freq=None):
     """
     Gets called if the query is a boolean query. Takes a list of query terms, and is the driver function for calling
     functions that process phrases, retrieve posting lists and merge posting lists. It is called recursively until
@@ -467,6 +413,84 @@ def boolean_and_freq_to_score(frequency_vector, priority_constant=6):
     return score
 
 
+def ranked_retrieval(query, dictionary, term_to_term_id, number_of_docs, is_boolean_query=False):
+    """
+    Takes a query and calculates tf-idf for this query in all documents that contains this term.
+    Returns a dictionary containing all documents that appeared as key, and the sum of all tf-idf s for each
+    document as value.
+
+    Also have the ability to process boolean queries with phrases with the following intuition. The only difference
+    is in how the posting lists are retrieved for phrases.
+    """
+
+    if is_boolean_query:
+        query = list(filter(lambda c: c != 'AND', query))  # remove all 'AND' from the query
+
+    scores_pre_normalize = {}
+    sum_weight_q = 0
+
+    for term in query:
+        is_phrase_query = False
+
+        if '%' in term:
+            is_phrase_query = True
+
+        if is_phrase_query:  # in case of phrase query
+            posting_t = handle_phrase_query(term, dictionary, term_to_term_id)
+            if posting_t:
+                doc_freq = len(posting_t)
+                idf_qt = calculate_idf(number_of_docs, doc_freq)
+            else:
+                # the idf for the query term is set to 0 if it appears in NO documents
+                idf_qt = 0
+
+        else:  # in case of a single search term
+            if term in term_to_term_id:
+                term_id = term_to_term_id[term]
+                doc_freq = dictionary[term_id][0]
+
+                # idf query -> parameters: total number of documents and document frequency
+                idf_qt = calculate_idf(number_of_docs, doc_freq)
+            else:
+                # the idf for the query term is set to 0 if it appears in NO documents
+                idf_qt = 0
+
+        # --- TERM FREQUENCY (QUERY) --- #
+        # this should intuitively be the same whether we search for a term or a phrase.
+        term_freq_qt = query.count(term)
+        tf_qt = calculate_tf(term_freq_qt)
+
+        # --- TF x IDF (QUERY) --- #
+        weight_qt = tf_qt * idf_qt
+
+        # add this weight (squared) to the total squared weight of this query. This is used in cosine normalization
+        sum_weight_q += weight_qt ** 2
+
+        if not is_phrase_query:
+            # in case of no posting list belonging to query term t, this will always return an empty list "[]"
+            # which will be caught in the following if-statement.
+            posting_t = search_term(term, dictionary, term_to_term_id)
+
+        # if this is a search query term that we do not have in our dictionary
+        # otherwise, the score contribution after multiplication will always be zero for this term.
+        if posting_t:
+            for posting in posting_t:
+                doc_id = posting[0]
+
+                if doc_id not in scores_pre_normalize:
+                    scores_pre_normalize[doc_id] = 0
+
+                term_freq_td = posting[1]
+
+                tf_dt = calculate_tf(term_freq_td)
+
+                # accumulate the product of non-normalized wt_doc and wt_query for every document
+                # this will later be normalized using cosine normalization.
+                scores_pre_normalize[doc_id] += weight_qt * tf_dt
+
+    return scores_pre_normalize, sum_weight_q
+
+
 def run_search(dict_file, postings_file, queries_file, results_file):
     """
     using the given dictionary file and postings file,
@@ -483,11 +507,11 @@ def run_search(dict_file, postings_file, queries_file, results_file):
         # The dictionary is structured as * term_id : (doc_freq, file_offset)
         dictionary = pickle.load(read_dict)
 
-    with open('term_conversion.txt', 'rb') as read_term_converter:
+    with open(TERM_CONVERSION_FILEPATH, 'rb') as read_term_converter:
         # term (str) -> term id (int, 4 bytes)
         term_to_term_id = pickle.load(read_term_converter)
 
-    with open('document_lengths.txt', 'rb') as read_lengths:
+    with open(DOCUMENT_LENGTHS_FILEPATH, 'rb') as read_lengths:
         number_of_docs = pickle.load(read_lengths)
         documents_lengths = pickle.load(read_lengths)
 
@@ -516,9 +540,13 @@ def run_search(dict_file, postings_file, queries_file, results_file):
         for idx, term in enumerate(q_split):
             q_split[idx] = normalize_token(term) if term != 'AND' else 'AND'
 
+        print(q_split)
+
         results_heap = []
         heapify(results_heap)
 
+        """ Previous implementation where we used strict boolean search """
+        """
         if is_boolean_query:
             search_results, result_frequencies = handle_boolean_query(q_split, dictionary, term_to_term_id)
 
@@ -531,23 +559,24 @@ def run_search(dict_file, postings_file, queries_file, results_file):
                 # this max-heap have the score of ALL documents, uses the heapq (min-heap) module but turns into a
                 # max-heap by changing the definitions of lt and eq with TrackScore class.
                 heappush(results_heap, new_score)
-        else:
-            scores_pre_normalize, sum_weight_q = handle_ranked_retrieval(q_split, dictionary, term_to_term_id,
-                                                                         number_of_docs)
+        """
 
-            for key, value in scores_pre_normalize.items():
-                # note: the document lengths was calculated during indexing and is used from a dictionary during search.
+        scores_pre_normalize, sum_weight_q = ranked_retrieval(q_split, dictionary, term_to_term_id,
+                                                                number_of_docs, is_boolean_query)
 
-                normalized_score = value * cosine_normalize_factor(sum_weight_q) * \
-                                   cosine_normalize_factor(documents_lengths[key])
+        for key, value in scores_pre_normalize.items():
+            # note: the document lengths was calculated during indexing and is used from a dictionary during search.
 
-                # TrackScore is a custom class that is used to be able to define our own definition of "<" and "="
-                # between objects and also the string representation of such objects.
-                new_score = TrackScore(key, normalized_score)
+            normalized_score = value * cosine_normalize_factor(sum_weight_q) * \
+                               cosine_normalize_factor(documents_lengths[key])
 
-                # this max-heap have the score of ALL documents, uses the heapq (min-heap) module but turns into a
-                # max-heap by changing the definitions of lt and eq with TrackScore class.
-                heappush(results_heap, new_score)
+            # TrackScore is a custom class that is used to be able to define our own definition of "<" and "="
+            # between objects and also the string representation of such objects.
+            new_score = TrackScore(key, normalized_score)
+
+            # this max-heap have the score of ALL documents, uses the heapq (min-heap) module but turns into a
+            # max-heap by changing the definitions of lt and eq with TrackScore class.
+            heappush(results_heap, new_score)
 
         write_results_to_file(results_file, results_heap)
 
