@@ -3,7 +3,6 @@ import math
 import os
 import pickle
 import time
-
 import nltk
 import sys
 import getopt
@@ -68,6 +67,23 @@ def normalize_token(token):
     """
     token = token.lower()  # case folding
 
+    # removes leading and trailing non-alphanumeric characters
+    token_length = len(token)
+    l_idx = 0
+    r_idx = token_length - 1
+
+    for i in range(token_length):
+        if token[i].isalnum():
+            l_idx = i
+            break
+
+    for i in range(token_length - 1, 0, -1):
+        if token[i].isalnum():
+            r_idx = i
+            break
+
+    token = token[l_idx: r_idx + 1]
+
     # currently not using any stemming due to the time complexity of this operation
     if USE_STEMMING:
         token = PORTER_STEMMER.stem(token)  # porter-stemming
@@ -76,7 +92,7 @@ def normalize_token(token):
 
 
 def normalize_words_in_list(list_of_words):
-    return [normalize_token(token) for token in list_of_words if token.isalpha()]
+    return [normalize_token(token) for token in list_of_words]
 
 
 def create_positional_index(content, document_id, term_id, term_to_term_id, term_id_to_term,
@@ -156,6 +172,7 @@ def pre_process_file(in_file_path):
     for row in csvreader:
         # The regexp tokenization is benchmarked to be much faster than what was implemented before:
         # src: https://towardsdatascience.com/benchmarking-python-nlp-tokenizers-3ac4735100c5
+
         tokenized_content = nltk.regexp_tokenize(row[2], pattern='\s+', gaps=True)
 
         normalized_content = normalize_words_in_list(tokenized_content)
